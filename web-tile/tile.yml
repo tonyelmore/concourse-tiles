@@ -1,106 +1,239 @@
 ---
-name: concourse_web
+name: concourse-web
 icon_file: resources/concourse-icon.png
 label: 'Concourse Web/DB'
-description: 'Concourse CI/CD Web Interface and Database'
+description: 'Concourse CI/CD Web Interface with co-located Database, UAA, and CredHub'
 
-# At least one form must be defined in tile.yml
+# Forms for configuration (based on the ops files you mentioned)
 forms:
 - name: web_config
   label: Web Configuration
-  description: Configure Concourse Web/DB settings
+  description: Configure Concourse Web and external access
   properties:
   - name: external_url
     type: string
     label: External URL
-    description: External URL for Concourse Web UI
+    description: External URL for Concourse Web UI (supports both HTTP and HTTPS)
     default: 'https://concourse.example.com'
-  - name: worker_key_pub
-    type: text
-    label: Worker Public Key
-    description: Public key for worker authentication (optional)
-    optional: true
+  - name: enable_basic_auth
+    type: boolean
+    label: Enable Basic Authentication
+    description: Enable basic auth in addition to other auth methods
+    default: true
   - name: basic_auth_username
     type: string
     label: Basic Auth Username
-    description: Username for basic authentication
+    description: Username for basic authentication (if enabled)
     default: 'admin'
+    depends_on: enable_basic_auth
 
-# Packages define what gets deployed
+- name: ssl_config
+  label: SSL Configuration
+  description: Configure TLS/SSL settings
+  properties:
+  - name: tls_cert
+    type: text
+    label: TLS Certificate
+    description: TLS certificate for HTTPS (leave empty to generate self-signed)
+    optional: true
+  - name: tls_private_key
+    type: text
+    label: TLS Private Key
+    description: TLS private key for HTTPS (leave empty to generate self-signed)
+    optional: true
+
+- name: database_config
+  label: Database Configuration  
+  description: Configure internal PostgreSQL database
+  properties:
+  - name: postgres_password
+    type: secret
+    label: PostgreSQL Password
+    description: Password for PostgreSQL database (auto-generated if empty)
+    optional: true
+
+# Packages define what gets deployed - single co-located deployment
 packages:
-- name: concourse_web
+- name: concourse-web-complete
   type: bosh-release
   path: resources/concourse-7.11.2.tgz
   jobs:
-  - name: web
+  # Main Concourse ATC (web) component
+  - name: concourse-web
     templates:
-    - name: web
+    - name: atc
       release: concourse
-    memory: 4096
-    ephemeral_disk: 16384
-    persistent_disk: 32768
+    - name: tsa
+      release: concourse
+    # Co-located PostgreSQL for Concourse data
+    - name: postgresql
+      release: postgres
+    # Co-located UAA for authentication
+    - name: uaa
+      release: uaa
+    # Co-located CredHub for secrets management
+    - name: credhub
+      release: credhub
+    # Backup and restore capabilities
+    - name: database-backup-restorer
+      release: backup-and-restore-sdk
+    memory: 8192
+    ephemeral_disk: 32768
+    persistent_disk: 102400
     instances: 1
-    cpu: 2
+    cpu: 4
     static_ip: 1
     dynamic_ip: 0
     max_in_flight: 1
     properties:
+      # Concourse ATC properties (based on basic-auth.yml, tls.yml, privileged-https.yml)
       external_url: (( .properties.external_url.value ))
-      basic_auth_username: (( .properties.basic_auth_username.value ))
-      worker_key_pub: (( .properties.worker_key_pub.value ))
+      token_signing_key: (( .properties.token_signing_key.value ))
+      session_signing_key: (( .properties.session_signing_key.value ))
+      
+      # Basic auth configuration (basic-auth.yml)
+      main_team:
+        auth:
+          local:
+            users: 
+            - (( .properties.basic_auth_username.value ))
+      
+      # TLS configuration (tls.yml, tls-vars.yml)
+      tls_cert: (( .properties.tls_cert.value ))
+      tls_key: (( .properties.tls_private_key.value ))
+      tls_bind_port: 443
+      
+      # Privileged containers support (privileged-https.yml)
+      container_placement_strategy: random
+      max_containers: 250
+      
+      # UAA integration (uaa.yml)
+      uaa_url: "https://127.0.0.1:8443"
+      
+      # CredHub integration (credhub-colocated.yml)
+      credhub_url: "https://127.0.0.1:8844/api/"
+      
+      # PostgreSQL configuration (secure-internal-postgres.yml series)
+      postgresql:
+        databases:
+        - name: concourse
+          user: concourse
+          password: (( .properties.postgres_password.value ))
+        - name: uaa
+          user: uaa  
+          password: (( .properties.postgres_password.value ))
+        - name: credhub
+          user: credhub
+          password: (( .properties.postgres_password.value ))
+        listen_addresses: "127.0.0.1"
+        port: 5432
+        
+      # UAA configuration (secure-internal-postgres-uaa.yml)
+      uaa:
+        url: "https://127.0.0.1:8443"
+        port: 8443
+        sslCertificate: (( .properties.tls_cert.value ))
+        sslPrivateKey: (( .properties.tls_private_key.value ))
+        database:
+          url: "jdbc:postgresql://127.0.0.1:5432/uaa"
+          username: uaa
+          password: (( .properties.postgres_password.value ))
+        clients:
+          concourse:
+            id: concourse
+            secret: (( .properties.uaa_concourse_client_secret.value ))
+            authorized-grant-types: "authorization_code,refresh_token"
+            scope: "openid,profile,email,federated:id,groups"
+            authorities: "uaa.none"
+            access-token-validity: 86400
+            refresh-token-validity: 2592000
+            redirect-uri: "(( .properties.external_url.value ))/sky/issuer/callback"
+          credhub_cli:
+            authorized-grant-types: password,refresh_token
+            scope: credhub.read,credhub.write
+            authorities: uaa.resource
+            access-token-validity: 120
+            refresh-token-validity: 1800
+            secret: ""
+            
+      # CredHub configuration (secure-internal-postgres-credhub.yml)  
+      credhub:
+        port: 8844
+        authentication:
+          uaa:
+            url: "https://127.0.0.1:8443"
+            verification_key: (( .properties.uaa_jwt_verification_key.value ))
+        data_storage:
+          type: postgres
+          host: 127.0.0.1
+          port: 5432
+          database: credhub
+          username: credhub
+          password: (( .properties.postgres_password.value ))
+          require_tls: false
+        encryption:
+          keys:
+          - provider_name: int
+            key_properties:
+              encryption_password: (( .properties.credhub_encryption_password.value ))
+            active: true
+        tls:
+          certificate: (( .properties.tls_cert.value ))
+          private_key: (( .properties.tls_private_key.value ))
 
-- name: postgres
+# Additional BOSH releases needed
+- name: postgres-release
   type: bosh-release
   path: resources/postgres-53.0.3.tgz
-  jobs:
-  - name: postgres
-    templates:
-    - name: postgres
-      release: postgres
-    memory: 2048
-    ephemeral_disk: 8192
-    persistent_disk: 16384
-    instances: 1
-    cpu: 1
-    static_ip: 1
-    dynamic_ip: 0
-    properties:
-      databases:
-      - name: concourse
-        user: concourse
-        password: (( .properties.db_password.value ))
 
-- name: uaa
+- name: uaa-release  
   type: bosh-release
   path: resources/uaa-77.30.0.tgz
-  jobs:
-  - name: uaa
-    templates:
-    - name: uaa
-      release: uaa
-    memory: 2048
-    ephemeral_disk: 8192
-    instances: 1
-    cpu: 1
-    static_ip: 1
-    dynamic_ip: 0
 
-- name: credhub
+- name: credhub-release
   type: bosh-release
   path: resources/credhub-2.14.2.tgz
-  jobs:
-  - name: credhub
-    templates:
-    - name: credhub
-      release: credhub
-    memory: 2048
-    ephemeral_disk: 8192
-    instances: 1
-    cpu: 1
-    static_ip: 1
-    dynamic_ip: 0
 
-# Stemcell criteria
+- name: backup-and-restore-sdk-release
+  type: bosh-release
+  path: resources/backup-and-restore-sdk-1.18.74.tgz
+
+# Post-deploy errands (backup-atc-colocated-web.yml)
+- name: backup-database
+  type: bosh-release
+  path: resources/backup-and-restore-sdk-1.18.74.tgz
+  jobs:
+  - name: backup-database
+    templates:
+    - name: database-backup-restorer
+      release: backup-and-restore-sdk
+    lifecycle: errand
+    post_deploy: false
+    run_post_deploy_errand_default: when-changed
+    memory: 1024
+    ephemeral_disk: 8192
+    cpu: 1
+    dynamic_ip: 1
+
+# Stemcell criteria - Ubuntu Jammy as specified
 stemcell_criteria:
   os: ubuntu-jammy
   version: '1.*'
+
+# Property blueprints for auto-generated secrets
+property_blueprints:
+- name: token_signing_key
+  type: rsa_pkey_credentials
+  optional: false
+- name: session_signing_key  
+  type: rsa_pkey_credentials
+  optional: false
+- name: uaa_concourse_client_secret
+  type: secret
+  optional: false
+- name: uaa_jwt_verification_key
+  type: rsa_pkey_credentials
+  optional: false
+- name: credhub_encryption_password
+  type: secret
+  optional: false
