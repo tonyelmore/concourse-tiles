@@ -1,0 +1,106 @@
+---
+name: concourse_web
+icon_file: resources/concourse-icon.png
+label: 'Concourse Web/DB'
+description: 'Concourse CI/CD Web Interface and Database'
+
+# At least one form must be defined in tile.yml
+forms:
+- name: web_config
+  label: Web Configuration
+  description: Configure Concourse Web/DB settings
+  properties:
+  - name: external_url
+    type: string
+    label: External URL
+    description: External URL for Concourse Web UI
+    default: 'https://concourse.example.com'
+  - name: worker_key_pub
+    type: text
+    label: Worker Public Key
+    description: Public key for worker authentication (optional)
+    optional: true
+  - name: basic_auth_username
+    type: string
+    label: Basic Auth Username
+    description: Username for basic authentication
+    default: 'admin'
+
+# Packages define what gets deployed
+packages:
+- name: concourse_web
+  type: bosh-release
+  path: resources/concourse-7.11.2.tgz
+  jobs:
+  - name: web
+    templates:
+    - name: web
+      release: concourse
+    memory: 4096
+    ephemeral_disk: 16384
+    persistent_disk: 32768
+    instances: 1
+    cpu: 2
+    static_ip: 1
+    dynamic_ip: 0
+    max_in_flight: 1
+    properties:
+      external_url: (( .properties.external_url.value ))
+      basic_auth_username: (( .properties.basic_auth_username.value ))
+      worker_key_pub: (( .properties.worker_key_pub.value ))
+
+- name: postgres
+  type: bosh-release
+  path: resources/postgres-53.0.3.tgz
+  jobs:
+  - name: postgres
+    templates:
+    - name: postgres
+      release: postgres
+    memory: 2048
+    ephemeral_disk: 8192
+    persistent_disk: 16384
+    instances: 1
+    cpu: 1
+    static_ip: 1
+    dynamic_ip: 0
+    properties:
+      databases:
+      - name: concourse
+        user: concourse
+        password: (( .properties.db_password.value ))
+
+- name: uaa
+  type: bosh-release
+  path: resources/uaa-77.30.0.tgz
+  jobs:
+  - name: uaa
+    templates:
+    - name: uaa
+      release: uaa
+    memory: 2048
+    ephemeral_disk: 8192
+    instances: 1
+    cpu: 1
+    static_ip: 1
+    dynamic_ip: 0
+
+- name: credhub
+  type: bosh-release
+  path: resources/credhub-2.14.2.tgz
+  jobs:
+  - name: credhub
+    templates:
+    - name: credhub
+      release: credhub
+    memory: 2048
+    ephemeral_disk: 8192
+    instances: 1
+    cpu: 1
+    static_ip: 1
+    dynamic_ip: 0
+
+# Stemcell criteria
+stemcell_criteria:
+  os: ubuntu-jammy
+  version: '1.*'

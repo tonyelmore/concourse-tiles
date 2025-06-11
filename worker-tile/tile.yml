@@ -1,0 +1,85 @@
+me: concourse-workers
+icon_file: resources/concourse-worker-icon.png
+label: 'Concourse Workers'
+description: 'Concourse CI/CD Worker Nodes'
+
+# At least one form must be defined in tile.yml
+forms:
+- name: worker_config
+  label: Worker Configuration
+  description: Configure Concourse Worker settings
+  properties:
+  - name: tsa_host
+    type: string
+    label: TSA Host
+    description: Hostname or IP of the Concourse Web TSA (SSH gateway)
+  - name: worker_key_priv
+    type: text
+    label: Worker Private Key
+    description: Private key for worker authentication
+  - name: worker_tags
+    type: string
+    label: Worker Tags
+    description: Comma-separated tags for worker classification (optional)
+    optional: true
+    default: ''
+
+# Packages define what gets deployed
+packages:
+- name: concourse-worker
+  type: bosh-release
+  path: resources/concourse-7.11.2.tgz
+  jobs:
+  - name: worker
+    templates:
+    - name: worker
+      release: concourse
+    memory: 8192
+    ephemeral_disk: 32768
+    persistent_disk: 0
+    instances: 3
+    cpu: 4
+    static_ip: 0
+    dynamic_ip: 1
+    max_in_flight: 1
+    properties:
+      tsa_host: (( .properties.tsa_host.value ))
+      worker_key_priv: (( .properties.worker_key_priv.value ))
+      worker_tags: (( .properties.worker_tags.value ))
+
+- name: garden-runc
+  type: bosh-release
+  path: resources/garden-runc-1.49.0.tgz
+  jobs:
+  - name: garden
+    templates:
+    - name: garden
+      release: garden-runc
+    memory: 1024
+    ephemeral_disk: 4096
+    instances: 3
+    cpu: 1
+    static_ip: 0
+    dynamic_ip: 1
+
+# Health check errand
+- name: worker-health-check
+  type: bosh-release
+  path: resources/concourse-7.11.2.tgz
+  jobs:
+  - name: worker-health-check
+    templates:
+    - name: worker-health-check
+      release: concourse
+    lifecycle: errand
+    post_deploy: true
+    run_post_deploy_errand_default: when-changed
+    memory: 512
+    ephemeral_disk: 4096
+    cpu: 1
+    dynamic_ip: 1
+
+# Stemcell criteria
+stemcell_criteria:
+  os: ubuntu-jammy
+  version: '1.*'
