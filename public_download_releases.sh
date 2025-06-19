@@ -58,7 +58,12 @@ else
     echo "⚠ WARNING: CredHub SHA1 mismatch. Expected: $EXPECTED_CREDHUB_SHA1, Got: $CREDHUB_SHA1"
 fi
 
-# 5. Garden-runC BOSH Release v1.70.0 (latest stable, needed for workers)
+# 5. Syslog BOSH Release v1.0.0 (latest stable)
+echo "Downloading Syslog v1.0.0..."
+curl -L -o syslog-12.2.4.tgz "https://bosh.io/d/github.com/cloudfoundry/syslog-release?v=12.2.4"
+echo "✓ Downloaded syslog-12.2.4.tgz"
+
+# 6. Garden-runC BOSH Release v1.70.0 (latest stable, needed for workers)
 echo "Downloading Garden-runC v1.70.0..."
 curl -L -o garden-runc-1.70.0.tgz "https://bosh.io/d/github.com/cloudfoundry/garden-runc-release?v=1.70.0"
 echo "✓ Downloaded garden-runc-1.70.0.tgz"
