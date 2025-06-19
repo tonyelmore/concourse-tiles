@@ -1,10 +1,54 @@
----
+- name: credhub_encryption_password
+  type: secret
+  optional: false
+  condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))- name: credhub-release
+  type: bosh-release
+  path: resources/credhub-2.14.2.tgz
+  condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))          credhub_cli:
+            authorized-grant-types: password,refresh_token
+            scope: credhub.read,credhub.write
+            authorities: uaa.resource
+            access-token-validity: 120
+            refresh-token-validity: 1800
+            secret: ""
+            condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))
+            
+      # CredHub configuration (conditional)
+      credhub:
+        port: 8844
+        authentication:
+          uaa:
+            url: "https://127.0.0.1:8443"
+            verification_key: (( .properties.uaa_jwt_verification_key.value ))
+        data_storage:
+          type: postgres
+          host: 127.0.0.1
+          port: 5432
+          database: credhub
+          username: credhub
+          password: (( .properties.postgres_password.value ))
+          require_tls: false
+        encryption:
+          keys:
+          - provider_name: int
+            key_properties:
+              encryption_password: (( .properties.credhub_encryption_password.value ))
+            active: true
+        tls:
+          certificate: (( .properties.tls_cert.value ))
+          private_key: (( .properties.tls_private_key.value ))
+        condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))    # Co-located CredHub (conditional on secrets backend selection)
+    - name: credhub
+      release: credhub
+      consumes:
+        database: {from: postgresql-db}
+      condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))---
 name: concourse-web
 icon_file: resources/concourse-icon.png
 label: 'Concourse Web/DB'
-description: 'Concourse CI/CD Web Interface with co-located Database, UAA, and CredHub'
+description: 'Concourse CI/CD Web Interface with co-located Database and UAA (uses external Vault for secrets)'
 
-# Forms for configuration (based on the ops files you mentioned)
+# Forms for configuration (CredHub removed, Vault added)
 forms:
 - name: web_config
   label: Web Configuration
@@ -42,6 +86,67 @@ forms:
     description: TLS private key for HTTPS (leave empty to generate self-signed)
     optional: true
 
+- name: secret_management
+  label: Secret Management
+  description: Configure secrets management for Concourse
+  properties:
+  - name: secrets_backend
+    type: dropdown_select
+    label: Secrets Backend
+    description: Choose your secrets management backend
+    default: vault
+    options:
+    - name: vault
+      label: External Vault
+    - name: credhub
+      label: Co-located CredHub
+  - name: vault_url
+    type: string
+    label: Vault URL
+    description: URL of your external Vault server (e.g., https://vault.example.com:8200)
+    depends_on: secrets_backend.vault
+  - name: vault_auth_method
+    type: dropdown_select
+    label: Vault Authentication Method
+    description: Method to authenticate with Vault
+    default: token
+    depends_on: secrets_backend.vault
+    options:
+    - name: token
+      label: Token Authentication
+    - name: approle
+      label: AppRole Authentication
+  - name: vault_token
+    type: secret
+    label: Vault Token
+    description: Vault token for authentication (if using token auth)
+    optional: true
+    depends_on: secrets_backend.vault
+  - name: vault_approle_role_id
+    type: string
+    label: Vault AppRole Role ID
+    description: Role ID for AppRole authentication
+    optional: true
+    depends_on: secrets_backend.vault
+  - name: vault_path_prefix
+    type: string
+    label: Vault Path Prefix
+    description: Path prefix for Concourse secrets in Vault
+    default: '/concourse'
+    depends_on: secrets_backend.vault
+  - name: vault_shared_path
+    type: string
+    label: Vault Shared Path
+    description: Path for shared secrets accessible by all teams
+    default: 'shared'
+    depends_on: secrets_backend.vault
+  - name: credhub_url
+    type: string
+    label: CredHub URL
+    description: URL for CredHub API (default uses co-located instance)
+    default: 'https://127.0.0.1:8844/api/'
+    depends_on: secrets_backend.credhub
+
 - name: database_config
   label: Database Configuration  
   description: Configure internal PostgreSQL database
@@ -52,7 +157,7 @@ forms:
     description: Password for PostgreSQL database (auto-generated if empty)
     optional: true
 
-# Packages define what gets deployed - single co-located deployment
+# Packages define what gets deployed - single co-located deployment (CredHub removed)
 packages:
 - name: concourse-web-complete
   type: bosh-release
@@ -71,9 +176,6 @@ packages:
     # Co-located UAA for authentication
     - name: uaa
       release: uaa
-    # Co-located CredHub for secrets management
-    - name: credhub
-      release: credhub
     # Backup and restore capabilities
     - name: database-backup-restorer
       release: backup-and-restore-sdk
@@ -86,7 +188,7 @@ packages:
     dynamic_ip: 0
     max_in_flight: 1
     properties:
-      # Concourse ATC properties (based on basic-auth.yml, tls.yml, privileged-https.yml)
+      # Concourse ATC properties (basic-auth.yml, tls.yml, privileged-https.yml)
       external_url: (( .properties.external_url.value ))
       token_signing_key: (( .properties.token_signing_key.value ))
       session_signing_key: (( .properties.session_signing_key.value ))
@@ -110,10 +212,23 @@ packages:
       # UAA integration (uaa.yml)
       uaa_url: "https://127.0.0.1:8443"
       
-      # CredHub integration (credhub-colocated.yml)
-      credhub_url: "https://127.0.0.1:8844/api/"
-      
-      # PostgreSQL configuration (secure-internal-postgres.yml series)
+      # Secret Management - Conditional Vault or CredHub configuration
+      vault:
+        url: (( .properties.vault_url.value ))
+        auth:
+          method: (( .properties.vault_auth_method.value ))
+          token: (( .properties.vault_token.value ))
+          approle:
+            role_id: (( .properties.vault_approle_role_id.value ))
+        path_prefix: (( .properties.vault_path_prefix.value ))
+        shared_path: (( .properties.vault_shared_path.value ))
+        enabled: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="vault") ))
+        
+      credhub:
+        url: (( .properties.credhub_url.value ))
+        enabled: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))
+        
+      # PostgreSQL configuration (includes CredHub DB when selected)
       postgresql:
         databases:
         - name: concourse
@@ -125,6 +240,7 @@ packages:
         - name: credhub
           user: credhub
           password: (( .properties.postgres_password.value ))
+          condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))
         listen_addresses: "127.0.0.1"
         port: 5432
         
@@ -148,40 +264,8 @@ packages:
             access-token-validity: 86400
             refresh-token-validity: 2592000
             redirect-uri: "(( .properties.external_url.value ))/sky/issuer/callback"
-          credhub_cli:
-            authorized-grant-types: password,refresh_token
-            scope: credhub.read,credhub.write
-            authorities: uaa.resource
-            access-token-validity: 120
-            refresh-token-validity: 1800
-            secret: ""
-            
-      # CredHub configuration (secure-internal-postgres-credhub.yml)  
-      credhub:
-        port: 8844
-        authentication:
-          uaa:
-            url: "https://127.0.0.1:8443"
-            verification_key: (( .properties.uaa_jwt_verification_key.value ))
-        data_storage:
-          type: postgres
-          host: 127.0.0.1
-          port: 5432
-          database: credhub
-          username: credhub
-          password: (( .properties.postgres_password.value ))
-          require_tls: false
-        encryption:
-          keys:
-          - provider_name: int
-            key_properties:
-              encryption_password: (( .properties.credhub_encryption_password.value ))
-            active: true
-        tls:
-          certificate: (( .properties.tls_cert.value ))
-          private_key: (( .properties.tls_private_key.value ))
 
-# Additional BOSH releases needed
+# Additional BOSH releases needed (CredHub release removed)
 - name: postgres-release
   type: bosh-release
   path: resources/postgres-53.0.3.tgz
@@ -189,10 +273,6 @@ packages:
 - name: uaa-release  
   type: bosh-release
   path: resources/uaa-77.30.0.tgz
-
-- name: credhub-release
-  type: bosh-release
-  path: resources/credhub-2.14.2.tgz
 
 - name: backup-and-restore-sdk-release
   type: bosh-release
@@ -220,7 +300,7 @@ stemcell_criteria:
   os: ubuntu-jammy
   version: '1.*'
 
-# Property blueprints for auto-generated secrets
+# Property blueprints for auto-generated secrets (CredHub secrets removed)
 property_blueprints:
 - name: token_signing_key
   type: rsa_pkey_credentials
@@ -233,7 +313,4 @@ property_blueprints:
   optional: false
 - name: uaa_jwt_verification_key
   type: rsa_pkey_credentials
-  optional: false
-- name: credhub_encryption_password
-  type: secret
   optional: false
