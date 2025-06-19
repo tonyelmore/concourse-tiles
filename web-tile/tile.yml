@@ -1,4 +1,73 @@
-- name: credhub_encryption_password
+- name: syslog-release
+  type: bosh-release
+  path: resources/syslog-12.2.4.tgz
+  condition: (( .properties.enable_syslog.value ))      # Syslog configuration (conditional)
+      syslog:
+        address: (( .properties.syslog_address.value ))
+        port: (( .properties.syslog_port.value ))
+        transport: (( .properties.syslog_transport.value ))
+        tls_enabled: (( .properties.syslog_tls_enabled.value ))
+        permitted_peer: (( .properties.syslog_permitted_peer.value ))
+        custom_rule: |
+          # Forward all Concourse logs
+          if $programname startswith "concourse" then @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+          if $programname startswith "atc" then @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+          if $programname startswith "tsa" then @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+          if $programname startswith "postgres" then @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+          if $programname startswith "uaa" then @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+          if $programname startswith "credhub" then @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+        fallback_servers:
+        - address: (( .properties.syslog_address.value ))
+          port: (( .properties.syslog_port.value ))
+          transport: (( .properties.syslog_transport.value ))
+        condition: (( .properties.enable_syslog.value ))    # Syslog forwarder (conditional on syslog configuration)
+    - name: syslog_forwarder
+      release: syslog
+      condition: (( .properties.enable_syslog.value ))- name: logging_config
+  label: Logging Configuration
+  description: Configure external logging and syslog forwarding
+  properties:
+  - name: enable_syslog
+    type: boolean
+    label: Enable Syslog Forwarding
+    description: Forward Concourse logs to external syslog server
+    default: false
+  - name: syslog_address
+    type: string
+    label: Syslog Server Address
+    description: Address of the syslog server (e.g., logs.example.com)
+    depends_on: enable_syslog
+  - name: syslog_port
+    type: integer
+    label: Syslog Server Port
+    description: Port of the syslog server
+    default: 514
+    depends_on: enable_syslog
+  - name: syslog_transport
+    type: dropdown_select
+    label: Syslog Transport Protocol
+    description: Transport protocol for syslog messages
+    default: udp
+    depends_on: enable_syslog
+    options:
+    - name: udp
+      label: UDP
+    - name: tcp
+      label: TCP
+    - name: relp
+      label: RELP (Reliable Event Logging Protocol)
+  - name: syslog_tls_enabled
+    type: boolean
+    label: Enable TLS for Syslog
+    description: Use TLS encryption for syslog messages
+    default: false
+    depends_on: enable_syslog
+  - name: syslog_permitted_peer
+    type: string
+    label: Syslog TLS Permitted Peer
+    description: Permitted peer name for TLS syslog (leave empty to skip verification)
+    optional: true
+    depends_on: syslog_tls_enabled- name: credhub_encryption_password
   type: secret
   optional: false
   condition: (( .properties.secrets_backend.selected_option.parsed_manifest(has_key="credhub") ))- name: credhub-release
