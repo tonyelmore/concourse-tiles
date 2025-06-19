@@ -1,0 +1,419 @@
+---
+name: concourse-web-enterprise
+icon_file: resources/concourse-icon.png
+label: 'Concourse Web/DB Enterprise'
+description: 'Enterprise Concourse CI/CD with LDAP, Audit, Encryption, and Static IPs'
+
+# Enterprise-focused forms with maximum configurability
+forms:
+- name: web_config
+  label: Web Configuration
+  description: Configure Concourse Web and external access
+  properties:
+  - name: external_url
+    type: string
+    label: External URL
+    description: External URL for Concourse Web UI
+    default: 'https://concourse.example.com'
+  - name: web_listen_port
+    type: integer
+    label: Web Listen Port
+    description: Port for Concourse web interface
+    default: 8080
+  - name: tls_port
+    type: integer
+    label: TLS Port
+    description: Port for HTTPS/TLS traffic
+    default: 443
+
+- name: network_config
+  label: Network Configuration
+  description: Configure static IP addresses and networking (static-web.yml)
+  properties:
+  - name: use_static_ips
+    type: boolean
+    label: Use Static IP Addresses
+    description: Deploy with static IP addresses instead of dynamic
+    default: true
+  - name: web_static_ips
+    type: string_list
+    label: Web Static IP Addresses
+    description: Comma-separated list of static IPs for web instances
+    depends_on: use_static_ips
+  - name: database_static_ip
+    type: ip_address
+    label: Database Static IP
+    description: Static IP address for database instance
+    depends_on: use_static_ips
+
+- name: ssl_config
+  label: SSL/TLS Configuration
+  description: Configure TLS/SSL certificates and encryption
+  properties:
+  - name: tls_cert
+    type: text
+    label: TLS Certificate
+    description: TLS certificate for HTTPS (PEM format)
+  - name: tls_private_key
+    type: text
+    label: TLS Private Key
+    description: TLS private key for HTTPS (PEM format)
+  - name: tls_ca_cert
+    type: text
+    label: TLS CA Certificate
+    description: Certificate Authority certificate for TLS chain
+    optional: true
+
+- name: ldap_config
+  label: LDAP Authentication
+  description: Configure LDAP authentication settings
+  properties:
+  - name: enable_ldap
+    type: boolean
+    label: Enable LDAP Authentication
+    description: Enable LDAP for user authentication
+    default: true
+  - name: ldap_server_url
+    type: string
+    label: LDAP Server URL
+    description: LDAP server URL (e.g., ldaps://ldap.company.com:636)
+    depends_on: enable_ldap
+  - name: ldap_bind_dn
+    type: string
+    label: LDAP Bind DN
+    description: Distinguished name for LDAP bind user
+    depends_on: enable_ldap
+  - name: ldap_bind_password
+    type: secret
+    label: LDAP Bind Password
+    description: Password for LDAP bind user
+    depends_on: enable_ldap
+  - name: ldap_user_search_base
+    type: string
+    label: LDAP User Search Base
+    description: Base DN for user searches (e.g., ou=users,dc=company,dc=com)
+    depends_on: enable_ldap
+  - name: ldap_user_search_filter
+    type: string
+    label: LDAP User Search Filter
+    description: Filter for user searches
+    default: '(uid={0})'
+    depends_on: enable_ldap
+  - name: ldap_group_search_base
+    type: string
+    label: LDAP Group Search Base
+    description: Base DN for group searches (e.g., ou=groups,dc=company,dc=com)
+    depends_on: enable_ldap
+  - name: ldap_group_search_filter
+    type: string
+    label: LDAP Group Search Filter
+    description: Filter for group searches
+    default: '(member={0})'
+    depends_on: enable_ldap
+  - name: ldap_main_team_users
+    type: string_list
+    label: LDAP Main Team Users
+    description: Comma-separated list of LDAP users for main team
+    depends_on: enable_ldap
+  - name: ldap_main_team_groups
+    type: string_list
+    label: LDAP Main Team Groups
+    description: Comma-separated list of LDAP groups for main team
+    depends_on: enable_ldap
+
+- name: audit_config
+  label: Audit and Compliance
+  description: Configure audit logging and compliance features
+  properties:
+  - name: enable_audit
+    type: boolean
+    label: Enable Audit Logging
+    description: Enable comprehensive audit logging
+    default: true
+  - name: audit_log_level
+    type: dropdown_select
+    label: Audit Log Level
+    description: Level of detail for audit logs
+    default: info
+    depends_on: enable_audit
+    options:
+    - name: debug
+      label: Debug (Most Verbose)
+    - name: info
+      label: Info (Standard)
+    - name: warn
+      label: Warning (Important Events)
+    - name: error
+      label: Error (Only Errors)
+  - name: audit_webhook_url
+    type: string
+    label: Audit Webhook URL
+    description: URL to send audit events via webhook
+    optional: true
+    depends_on: enable_audit
+
+- name: encryption_config
+  label: Encryption Configuration
+  description: Configure encryption settings for data at rest and in transit
+  properties:
+  - name: enable_encryption
+    type: boolean
+    label: Enable Advanced Encryption
+    description: Enable encryption for sensitive data
+    default: true
+  - name: encryption_key
+    type: secret
+    label: Encryption Key
+    description: Key for encrypting sensitive data (auto-generated if empty)
+    optional: true
+    depends_on: enable_encryption
+  - name: database_encryption_enabled
+    type: boolean
+    label: Enable Database Encryption
+    description: Encrypt database connections and storage
+    default: true
+    depends_on: enable_encryption
+
+- name: logging_config
+  label: Logging Configuration
+  description: Configure external logging and syslog forwarding
+  properties:
+  - name: enable_syslog
+    type: boolean
+    label: Enable Syslog Forwarding
+    description: Forward logs to external syslog server
+    default: true
+  - name: syslog_address
+    type: string
+    label: Syslog Server Address
+    description: Address of the syslog server
+    depends_on: enable_syslog
+  - name: syslog_port
+    type: integer
+    label: Syslog Server Port
+    description: Port of the syslog server
+    default: 514
+    depends_on: enable_syslog
+  - name: syslog_transport
+    type: dropdown_select
+    label: Syslog Transport Protocol
+    description: Transport protocol for syslog messages
+    default: tcp
+    depends_on: enable_syslog
+    options:
+    - name: udp
+      label: UDP
+    - name: tcp
+      label: TCP
+    - name: relp
+      label: RELP
+  - name: syslog_format
+    type: dropdown_select
+    label: Syslog Message Format
+    description: Format for syslog messages
+    default: rfc5424
+    depends_on: enable_syslog
+    options:
+    - name: rfc3164
+      label: RFC 3164 (Legacy)
+    - name: rfc5424
+      label: RFC 5424 (Modern)
+
+- name: backup_config
+  label: Backup Configuration
+  description: Configure backup and restore capabilities
+  properties:
+  - name: enable_backup
+    type: boolean
+    label: Enable Backup
+    description: Enable backup and restore functionality
+    default: true
+  - name: backup_schedule
+    type: string
+    label: Backup Schedule
+    description: Cron schedule for automated backups (e.g., '0 2 * * *')
+    default: '0 2 * * *'
+    depends_on: enable_backup
+  - name: backup_retention_days
+    type: integer
+    label: Backup Retention Days
+    description: Number of days to retain backup files
+    default: 30
+    depends_on: enable_backup
+
+- name: database_config
+  label: Database Configuration
+  description: Configure PostgreSQL database settings
+  properties:
+  - name: postgres_password
+    type: secret
+    label: PostgreSQL Password
+    description: Password for PostgreSQL database
+    optional: true
+
+# Enterprise deployment with static IPs and co-located services
+packages:
+- name: concourse-web-enterprise
+  type: bosh-release
+  path: resources/concourse-7.11.2.tgz
+  jobs:
+  # Main Concourse ATC (web) component
+  - name: concourse-web
+    templates:
+    - name: atc
+      release: concourse
+    - name: tsa
+      release: concourse
+    # Co-located PostgreSQL with encryption
+    - name: postgresql
+      release: postgres
+    # Syslog forwarder (conditional)
+    - name: syslog_forwarder
+      release: syslog
+      condition: (( .properties.enable_syslog.value ))
+    # Backup and restore
+    - name: database-backup-restorer
+      release: backup-and-restore-sdk
+      condition: (( .properties.enable_backup.value ))
+    memory: 8192
+    ephemeral_disk: 32768
+    persistent_disk: 204800
+    instances: 2
+    cpu: 4
+    static_ip: (( .properties.use_static_ips.value ? 2 : 0 ))
+    dynamic_ip: (( .properties.use_static_ips.value ? 0 : 1 ))
+    max_in_flight: 1
+    properties:
+      # Basic Concourse configuration
+      external_url: (( .properties.external_url.value ))
+      bind_port: (( .properties.web_listen_port.value ))
+      tls_bind_port: (( .properties.tls_port.value ))
+      token_signing_key: (( .properties.token_signing_key.value ))
+      session_signing_key: (( .properties.session_signing_key.value ))
+      
+      # Static IP configuration (static-web.yml)
+      static_ips: (( .properties.web_static_ips.value ))
+      
+      # TLS configuration (tls.yml, tls-port.yml)
+      tls_cert: (( .properties.tls_cert.value ))
+      tls_key: (( .properties.tls_private_key.value ))
+      tls_ca_cert: (( .properties.tls_ca_cert.value ))
+      
+      # LDAP Authentication (ldap.yml, add-main-team-ldap-users.yml, add-main-team-ldap-groups.yml)
+      main_team:
+        auth:
+          ldap:
+            url: (( .properties.ldap_server_url.value ))
+            bind_dn: (( .properties.ldap_bind_dn.value ))
+            bind_pw: (( .properties.ldap_bind_password.value ))
+            user_search:
+              base_dn: (( .properties.ldap_user_search_base.value ))
+              search_filter: (( .properties.ldap_user_search_filter.value ))
+              username_attribute: "uid"
+              id_attribute: "uidNumber"
+              email_attribute: "mail"
+              name_attribute: "cn"
+            group_search:
+              base_dn: (( .properties.ldap_group_search_base.value ))
+              search_filter: (( .properties.ldap_group_search_filter.value ))
+              group_name_attribute: "cn"
+            users: (( .properties.ldap_main_team_users.value ))
+            groups: (( .properties.ldap_main_team_groups.value ))
+          condition: (( .properties.enable_ldap.value ))
+      
+      # Audit configuration (audit.yml)
+      audit:
+        enabled: (( .properties.enable_audit.value ))
+        log_level: (( .properties.audit_log_level.value ))
+        webhook_url: (( .properties.audit_webhook_url.value ))
+        
+      # Encryption configuration (encryption.yml)
+      encryption:
+        enabled: (( .properties.enable_encryption.value ))
+        key: (( .properties.encryption_key.value ))
+        
+      # Container and runtime settings
+      container_placement_strategy: random
+      max_containers: 250
+      log_level: info
+      
+      # PostgreSQL configuration with encryption
+      postgresql:
+        databases:
+        - name: concourse
+          user: concourse
+          password: (( .properties.postgres_password.value ))
+        listen_addresses: "0.0.0.0"
+        port: 5432
+        ssl: (( .properties.database_encryption_enabled.value ))
+        ssl_cert_file: (( .properties.tls_cert.value ))
+        ssl_key_file: (( .properties.tls_private_key.value ))
+        ssl_ca_file: (( .properties.tls_ca_cert.value ))
+        
+      # Syslog configuration (syslog_forwarder.yml)
+      syslog:
+        address: (( .properties.syslog_address.value ))
+        port: (( .properties.syslog_port.value ))
+        transport: (( .properties.syslog_transport.value ))
+        format: (( .properties.syslog_format.value ))
+        custom_rule: |
+          # Forward all Concourse logs with enterprise formatting
+          *.* @@(( .properties.syslog_address.value )):(( .properties.syslog_port.value ))
+        condition: (( .properties.enable_syslog.value ))
+
+# Additional BOSH releases for enterprise features
+- name: postgres-release
+  type: bosh-release
+  path: resources/postgres-53.0.3.tgz
+
+- name: syslog-release
+  type: bosh-release
+  path: resources/syslog-12.2.4.tgz
+  condition: (( .properties.enable_syslog.value ))
+
+- name: backup-and-restore-sdk-release
+  type: bosh-release
+  path: resources/backup-and-restore-sdk-1.18.74.tgz
+  condition: (( .properties.enable_backup.value ))
+
+# Enterprise backup errand (backup-atc.yml)
+- name: backup-concourse
+  type: bosh-release
+  path: resources/backup-and-restore-sdk-1.18.74.tgz
+  jobs:
+  - name: backup-concourse
+    templates:
+    - name: database-backup-restorer
+      release: backup-and-restore-sdk
+    lifecycle: errand
+    post_deploy: false
+    run_post_deploy_errand_default: when-changed
+    memory: 2048
+    ephemeral_disk: 16384
+    cpu: 2
+    dynamic_ip: 1
+    properties:
+      schedule: (( .properties.backup_schedule.value ))
+      retention_days: (( .properties.backup_retention_days.value ))
+    condition: (( .properties.enable_backup.value ))
+
+# Stemcell criteria - Ubuntu Jammy
+stemcell_criteria:
+  os: ubuntu-jammy
+  version: '1.*'
+
+# Property blueprints for auto-generated secrets and enterprise keys
+property_blueprints:
+- name: token_signing_key
+  type: rsa_pkey_credentials
+  optional: false
+- name: session_signing_key
+  type: rsa_pkey_credentials
+  optional: false
+- name: encryption_key
+  type: secret
+  optional: true
+  condition: (( .properties.enable_encryption.value ))
+- name: postgres_password
+  type: secret
+  optional: true
